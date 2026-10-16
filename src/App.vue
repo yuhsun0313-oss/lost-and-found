@@ -1,17 +1,68 @@
 <script setup>
 import { computed, ref } from 'vue'
+// 把類似 '2026-10-16T23:54' 的格式轉成 '2026-10-16 下午 11:54'
+function formatDateTime(isoString) {
+  if (!isoString) return ''
+  // 處理有 T 的格式
+  const dateObj = new Date(isoString)
+  if (isNaN(dateObj.getTime())) return isoString // 如果不是標準格式就原樣回傳
 
+  const year = dateObj.getFullYear()
+  const month = String(dateObj.getMonth() + 1).padStart(2, '0')
+  const day = String(dateObj.getDate()).padStart(2, '0')
+  
+  let hours = dateObj.getHours()
+  const minutes = String(dateObj.getMinutes()).padStart(2, '0')
+  
+  // 判斷上下午並轉為 12 小時制
+  const period = hours >= 12 ? '下午' : '上午'
+  hours = hours % 12
+  hours = hours ? hours : 12 // 如果是 0 點要顯示 12
+  const strHours = String(hours).padStart(2, '0')
+
+  return `${year}-${month}-${day} ${period} ${strHours}:${minutes}`
+}
+// 💡 1. 控制詳細資料浮動視窗的變數
+const selectedItem = ref(null)
+
+// 💡 2. 點擊卡片開啟浮動視窗的函式
+function openDetail(item) {
+  selectedItem.value = item
+}
+
+// 💡 3. 在浮動視窗裡執行的刪除函式
+function deleteItem(id) {
+  const confirmed = confirm('確定要刪除這筆失物紀錄嗎？')
+  if (confirmed) {
+    items.value = items.value.filter((item) => item.id !== id)
+    selectedItem.value = null // 刪除後關閉彈窗
+  }
+}
 const keyword = ref('')
 const category = ref('全部')
 const showForm = ref(false)
 
-const categories = [
-  '全部',
-  '電子產品',
-  '文具',
-  '生活用品',
-  '其他',
-]
+
+// 動態計算出現頻率最高的前 10 個分類標籤
+const categories = computed(() => {
+  // 1. 統計所有物品中每個分類出現了幾次
+  const counts = {}
+  items.value.forEach(item => {
+    if (item.category) {
+      counts[item.category] = (counts[item.category] || 0) + 1
+    }
+  })
+
+  // 2. 把統計結果轉成陣列並按照出現次數由多到少排序
+  const sortedCategories = Object.keys(counts).sort((a, b) => {
+    return counts[b] - counts[a]
+  })
+
+  // 3. 取前 9 名（再加上固定的「全部」，總共最多 10 個標籤）
+  const topCategories = sortedCategories.slice(0, 9)
+
+  return ['全部', ...topCategories]
+})
 
 const items = ref([
   {
@@ -47,10 +98,14 @@ const items = ref([
 ])
 
 // 新增表單用的雙向綁定資料
+const now = new Date()
+const formattedDate = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')} ${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`
+
+// 新增表單用的雙向綁定資料
 const formTitle = ref('')
-const formCategory = ref('電子產品')
+const formCategory = ref('')
 const formLocation = ref('')
-const formDate = ref(new Date().toISOString().slice(0, 10))
+const formDate = ref(formattedDate) // 👈 這裡把原本寫死的日期改成帶入上面算好的時間變數！
 const formType = ref('found')
 const formImage = ref('')
 
@@ -68,31 +123,48 @@ const filteredItems = computed(() => {
     return matchesKeyword && matchesCategory
   })
 })
+// 📍 把這兩段分頁計算屬性貼在這裡！
+const currentPage = ref(1)
+const itemsPerPage = ref(12) // 每頁顯示 12 筆
 
+// 計算總共有幾頁
+const totalPages = computed(() => {
+  return Math.ceil(filteredItems.value.length / itemsPerPage.value)
+})
+
+// 切出當前頁面要顯示的清單
+const paginatedItems = computed(() => {
+  const start = (currentPage.value - 1) * itemsPerPage.value
+  const end = start + itemsPerPage.value
+  return filteredItems.value.slice(start, end)
+})
 function submitItem() {
-  // 檢查必填欄位
   if (!formTitle.value.trim() || !formLocation.value.trim()) {
     alert('請填寫物品名稱與地點！')
     return
   }
 
-  // 將新物品加到列表最前方
-  items.value.unshift({
+items.value.unshift({
     id: Date.now(),
     title: formTitle.value,
     category: formCategory.value,
     location: formLocation.value,
-    date: formDate.value,
+    date: formatDateTime(formDate.value), // 👈 這裡用 formatDateTime 轉換格式！
     type: formType.value,
     image: formImage.value.trim(),
   })
 
-  // 重置表單並關閉彈窗
   formTitle.value = ''
+  formCategory.value = '' // 👈 這行就是關鍵：強制讓分類恢復成「請選擇物品分類」！
   formLocation.value = ''
+  formType.value = 'found'
   formImage.value = ''
-  showForm.value = false
+  closeModal()
 }
+
+
+
+
 </script>
 
 <template>
@@ -195,11 +267,12 @@ function submitItem() {
         <!-- 物品卡片 -->
         <div class="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3">
           <article
-            v-for="item in filteredItems"
+            v-for="item in paginatedItems"
             :key="item.id"
             class="overflow-hidden rounded-2xl border border-slate-200
             bg-white shadow-sm transition hover:-translate-y-1
-            hover:shadow-lg"
+            hover:shadow-lg cursor-pointer"
+            @click="openDetail(item)"
           >
             <div class="relative h-52 bg-slate-100">
               <img
@@ -244,18 +317,39 @@ function submitItem() {
                 <p>📅 {{ item.date }}</p>
               </div>
 
-              <button
-                class="mt-5 w-full rounded-xl border border-indigo-200
+              <div
+                class="mt-5 w-full text-center rounded-xl border border-indigo-200
                 py-2.5 text-sm font-bold text-indigo-700
                 hover:bg-indigo-50"
-                @click="keyword = item.title"
               >
-                查看／搜尋相似物品
-              </button>
+                查看詳細內容
+              </div>
             </div>
           </article>
         </div>
+        <!-- 物品卡片網格 -->
+        <div class="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3">
+          <article
+            v-for="item in paginatedItems"
+            :key="item.id"
+            
+          >
+            <!-- 卡片內容 -->
+          </article>
+        </div>
 
+        <!-- ========================================== -->
+        <!-- 📍 請把「分頁器區塊」貼在這裡！ -->
+        <!-- ========================================== -->
+        <div v-if="totalPages > 1" class="mt-10 flex justify-center items-center gap-2">
+          <button :disabled="currentPage === 1" @click="currentPage--" class="px-4 py-2 border rounded-xl bg-white">&lt;</button>
+          <button v-for="page in totalPages" :key="page" @click="currentPage = page" :class="currentPage === page ? 'bg-indigo-600 text-white' : 'bg-white border'" class="px-4 py-2 rounded-xl font-bold">
+            {{ page }}
+          </button>
+          <button :disabled="currentPage === totalPages" @click="currentPage++" class="px-4 py-2 border rounded-xl bg-white">&gt;</button>
+        </div>
+
+        <!-- 原本就有的提示文字 -->
         <p
           v-if="filteredItems.length === 0"
           class="py-16 text-center text-slate-500"
@@ -265,11 +359,54 @@ function submitItem() {
       </section>
     </main>
 
-    <!-- 真正的刊登表單彈窗 -->
+    <!-- 💡 點擊卡片後彈出的詳細資料浮動視窗 (Modal) -->
+<div
+      v-if="selectedItem"
+      class="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-5 backdrop-blur-xs"
+      @click.self="selectedItem = null"
+    >
+      <div class="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl max-h-[90vh] overflow-y-auto">
+        <div class="flex items-center justify-between mb-4">
+          <span class="text-xs font-semibold text-indigo-600">{{ selectedItem.category }}</span>
+          <button
+            class="text-slate-400 hover:text-slate-600 font-bold"
+            @click="selectedItem = null"
+          >
+            ✕ 關閉
+          </button>
+        </div>
+
+        <div class="relative h-52 overflow-hidden rounded-xl bg-slate-100 mb-4">
+          <img
+            v-if="selectedItem.image"
+            :src="selectedItem.image"
+            :alt="selectedItem.title"
+            class="h-full w-full object-cover"
+          />
+          <div v-else class="flex h-full items-center justify-center text-slate-400">
+            尚無物品照片
+          </div>
+        </div>
+
+        <h2 class="text-xl font-black mb-2">{{ selectedItem.title }}</h2>
+        <p class="text-sm text-slate-600 mb-1">📍 地點：{{ selectedItem.location }}</p>
+        <p class="text-sm text-slate-600 mb-6">📅 時間：{{ selectedItem.date }}</p>
+
+        <!-- 放在浮動視窗裡的刪除按鈕 -->
+        <button
+          class="w-full rounded-xl border border-rose-200 bg-rose-50
+          py-3 text-sm font-bold text-rose-600 hover:bg-rose-100 transition"
+          @click="deleteItem(selectedItem.id)"
+        >
+          已找到，確定刪除？
+        </button>
+      </div>
+    </div>
+
+    <!-- 真正的刊登表單彈窗 (原本就有的) -->
     <div
       v-if="showForm"
-      class="fixed inset-0 z-10 flex items-center
-      justify-center bg-slate-900/50 p-5"
+      class="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-5 backdrop-blur-xs"
       @click.self="showForm = false"
     >
       <div class="w-full max-w-lg rounded-2xl bg-white p-6 shadow-xl max-h-[90vh] overflow-y-auto">
@@ -318,11 +455,14 @@ function submitItem() {
             <label class="block text-xs font-bold text-slate-700 mb-1">分類</label>
             <select
               v-model="formCategory"
-              class="w-full rounded-xl border border-slate-200 px-4 py-2.5 text-sm outline-none focus:border-indigo-600 bg-white"
+              required
+              class="w-full rounded-xl border border-slate-200 bg-white px-4 py-2.5 text-sm outline-none focus:border-indigo-600"
             >
-              <option v-for="cat in categories.filter(c => c !== '全部')" :key="cat" :value="cat">
-                {{ cat }}
-              </option>
+              <option value="" disabled selected>請選擇物品分類</option>
+              <option value="電子產品">電子產品</option>
+              <option value="文具">文具</option>
+              <option value="生活用品">生活用品</option>
+              <option value="其他">其他</option>
             </select>
           </div>
 
@@ -342,7 +482,7 @@ function submitItem() {
             <label class="block text-xs font-bold text-slate-700 mb-1">日期</label>
             <input
               v-model="formDate"
-              type="date"
+              type="datetime-local"
               class="w-full rounded-xl border border-slate-200 px-4 py-2.5 text-sm outline-none focus:border-indigo-600"
             />
           </div>
