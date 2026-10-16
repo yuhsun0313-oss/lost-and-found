@@ -139,11 +139,24 @@ const paginatedItems = computed(() => {
   return filteredItems.value.slice(start, end)
 })
 function submitItem() {
-  if (!formTitle.value.trim() || !formLocation.value.trim()) {
-    alert('請填寫物品名稱與地點！')
-    return
+  let errors = []
+
+  if (!formTitle.value.trim()) {
+    errors.push('請填寫物品名稱！')
+  }
+  if (!formLocation.value.trim()) {
+    errors.push('請填寫地點！')
+  }
+  if (!formCategory.value) {
+    errors.push('請選擇物品分類！')
   }
 
+  // 2. 如果 errors 裡面有東西，代表至少有一個以上沒填
+  if (errors.length > 0) {
+    // 用換行符號（\n）把所有錯誤訊息串在一起，一次全部跳出來！
+    alert(errors.join('\n'))
+    return // 擋在這裡，不往下執行新增
+  }
 items.value.unshift({
     id: Date.now(),
     title: formTitle.value,
@@ -159,7 +172,7 @@ items.value.unshift({
   formLocation.value = ''
   formType.value = 'found'
   formImage.value = ''
-  closeModal()
+  location.reload()
 }
 
 
